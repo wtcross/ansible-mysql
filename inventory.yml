@@ -1,0 +1,31 @@
+---
+mysql_servers:
+  hosts:
+    rkraus-rhel:
+      ansible_host: rkraus-rhel.home.rmkra.us
+
+  vars:
+    mysql_root_pw: R3dH4t!
+    mysql_dbs:
+      - alpha_db
+      - beta_db
+      - gamma_db
+    mysql_users:
+      - name: alpha
+        host: '%'
+        password: APa$$word
+        privs:
+          - 'alpha_db.*:ALL'
+          - 'beta_db.*:SELECT'
+          - 'gamma_db.*:SELECT'
+      - name: beta
+        host: 'api-server-%'
+        password: BPa$$word
+        privs:
+          - 'beta_db.*:UPDATE,INSERT,SELECT'
+      - name: gamma
+        host: '%'
+        password: CPa$$word
+        privs:
+          - 'gamma_db.*:ALL'
+          - 'beta_db.*:ALL'

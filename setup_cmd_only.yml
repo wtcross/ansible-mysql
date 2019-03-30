@@ -1,0 +1,108 @@
+#!/usr/bin/ansible-playbook
+---
+- name: Install and Configure MySQL
+  hosts: mysql_servers
+  become: yes
+
+  tasks:
+    - name: detect mariadb package name
+      set_fact:
+        mysql_package: mariadb-server
+        mysql_daemon: mariadb
+      when:
+        - ansible_distribution == 'RedHat'
+        - ansible_distribution_major_version == '7'
+
+    - name: detect mysql package name
+      set_fact:
+        mysql_package: mysql-server
+        mysql_daemon: mysqld
+      when:
+        - ansible_distribution == 'RedHat'
+        - ansible_distribution_major_version == '6'
+
+    - name: ensure mysql server and dependencies are installed
+      yum:
+        name: "{{ mysql_package }}, MySQL-python"
+        state: installed
+
+    - name: ensure mysql server is running/enabled
+      service:
+        name: "{{ mysql_daemon }}"
+        state: started
+        enabled: yes
+
+    - name: ensure root password is set
+      command: |
+        mysql -e "UPDATE mysql.user SET Password=PASSWORD('{{ mysql_root_pw }}') WHERE User='root'; FLUSH PRIVILEGES;"
+
+    - name: ensure root's profile is configured
+      template:
+        src: my.cnf.j2
+        dest: /root/.my.cnf
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: check for anonymous logins
+      command: |
+        mysql --batch --skip-column-names -e "SELECT Count(User) FROM mysql.user WHERE User='';"
+      register: anon_login_count
+      changed_when: False
+
+    - name: ensure anonymous logins are disabled
+      command: |
+        mysql -e "DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;"
+      when: anon_login_count.stdout | int > 0
+
+    - name: check for external root login
+      command: |
+        mysql --batch --skip-column-names -e "SELECT Count(User) FROM mysql.user WHERE User='root' and Host not in ('localhost', '127.0.0.1', '::1', '{{ ansible_hostname }}');"
+      register: external_root
+      changed_when: False
+
+    - name: ensure root can only connect from localhost
+      command: |
+        mysql -e "DELETE FROM mysql.user WHERE User='root' AND  Host not in ('localhost', '127.0.0.1', '::1', '{{ ansible_hostname }}'); FLUSH PRIVILEGES;"
+      when: external_root.stdout | int > 0
+
+    - name: check for test database
+      command: |
+        mysql --batch --skip-column-names -e "SELECT Count(Db) FROM mysql.db WHERE Db='test';"
+      register: test_db
+      changed_when: False
+
+    - name: ensure test database does not exist
+      command: |
+        mysql -e "DROP DATABASE Test;"
+      when: test_db | int > 0
+
+    - name: check for required databases
+      command: |
+        mysql --batch --skip-column-names -e "SELECT Count(SCHEMA_NAME) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ item }}';"
+      loop: "{{ mysql_dbs }}"
+      register: custom_dbs
+      changed_when: False
+
+    - name: ensure required databases exist
+      command: |
+        mysql -e "CREATE DATABASE {{ item.item }};"
+      loop: "{{ custom_dbs.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.stdout | int == 0
+
+    - name: check for defined users
+      command: |
+        mysql --batch --skip-column-names -e "SELECT Count(User) FROM mysql.user WHERE User='{{ item.name }}' AND Host='{{ item.host }}';"
+      loop: "{{ mysql_users }}"
+      register: custom_users
+      changed_when: False
+
+    - name: ensure defined users exist
+      command: |
+        mysql -e "GRANT {{ item.1.split(':').1 }} ON {{ item.1.split(':').0 }} TO '{{ item.0.item.name }}'@'{{ item.0.item.host }}' IDENTIFIED BY '{{ item.0.item.password }}';"
+      loop: "{{ custom_users.results | subelements('item.privs') }}"
+      loop_control:
+        label: "{{ item.0.item.name }}@{{ item.0.item.host}} - {{ item.1 }}"
+      when: item.0.stdout | int == 0

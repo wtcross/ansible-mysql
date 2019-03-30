@@ -1,0 +1,21 @@
+#!/usr/bin/ansible-playbook
+---
+- name: teardown mysql server
+  hosts: mysql_servers
+  become: yes
+
+  tasks:
+    - name: remove packages
+      yum:
+        name: mariadb-server, mysql-server, MySQL-python
+        state: absent
+
+    - name: purge database files
+      file:
+        path: /var/lib/mysql
+        state: absent
+
+    - name: remove root profile
+      file:
+        path: /root/.my.cnf
+        state: absent

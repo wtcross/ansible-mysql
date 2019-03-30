@@ -1,0 +1,89 @@
+#!/usr/bin/ansible-playbook
+---
+- name: Install and Configure MySQL
+  hosts: mysql_servers
+  become: yes
+
+  tasks:
+    - name: detect mariadb package name
+      set_fact:
+        mysql_package: mariadb-server
+        mysql_daemon: mariadb
+      when:
+        - ansible_distribution == 'RedHat'
+        - ansible_distribution_major_version == '7'
+
+    - name: detect mysql package name
+      set_fact:
+        mysql_package: mysql-server
+        mysql_daemon: mysqld
+      when:
+        - ansible_distribution == 'RedHat'
+        - ansible_distribution_major_version == '6'
+
+    - name: ensure mysql server and dependencies are installed
+      yum:
+        name: "{{ mysql_package }}, MySQL-python"
+        state: installed
+
+    - name: ensure mysql server is running/enabled
+      service:
+        name: "{{ mysql_daemon }}"
+        state: started
+        enabled: yes
+
+    - name: ensure root password is set
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_pw }}"
+        host_all: yes
+
+    - name: ensure root's profile is configured
+      template:
+        src: my.cnf.j2
+        dest: /root/.my.cnf
+        mode: 0600
+        owner: root
+        group: root
+
+    - name: ensure anonymous logins are disabled
+      mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
+
+    - name: query root user allowed hosts
+      command: |
+        mysql --batch --skip-column-names -e 'select Host from mysql.user;'
+      register: root_hosts
+      changed_when: False
+
+    - name: ensure root can only connect from localhost
+      mysql_user:
+        name: root
+        host: "{{ item }}"
+        state: absent
+      loop: "{{ root_hosts.stdout_lines }}"
+      when: item not in ['127.0.0.1', '::1', 'localhost', inventory_hostname]
+
+    - name: ensure test database does not exist
+      mysql_db:
+        name: test
+        state: absent
+
+    - name: ensure required databases exist
+      mysql_db:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ mysql_dbs }}"
+
+    - name: ensure defined users exist
+      mysql_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password }}"
+        host: "{{ item.host }}"
+        priv: "{{ item.privs | join('/') }}"
+        state: present
+      loop: "{{ mysql_users }}"
+      loop_control:
+        label: "{{ item.name }}"
