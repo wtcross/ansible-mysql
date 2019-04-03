@@ -1,5 +1,0 @@
----
-mysql_servers:
-  hosts:
-    rkraus-rhel:
-      ansible_host: rkraus-rhel.home.rmkra.us
